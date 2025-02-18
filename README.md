@@ -34,7 +34,7 @@ Later it has been extended with several useful features to manage accounts espec
 - Classify user account types by utilizing keywords to search in distinguish names (DN) for Active Directory users. This can be used if your organization used OUs containing account types like Service Accounts, Users, ... in Active Directory
 - Structure accounts by Country and Entity if your organization used AD OUs to setup country and entity structures
 - If you frequently pentest your organization (eg. with Mimikatz) for weak passwords you can include output files to mark user accounts with weak passwords (known to be crackable)
-- Depending on the size of your user base and the connection speed to your AD enviroment the script can easily take hours up to a day to complete. If it breaks, a recent state is saved frequently and can be continued. 
+- Depending on the size of your user base and the connection speed to your AD environment the script can easily take hours up to a day to complete. If it breaks, a recent state is saved frequently and can be continued. 
 
 ## Get started
 
