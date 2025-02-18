@@ -157,14 +157,12 @@ class UserStatsExportUser {
     [string]$Company = ""
     [string]$ADMobilePhone = ""
     [string]$AdminDescription = ""
-    [string]$EIDAccountEnabled = ""
+    [string]$AccountEnabled = ""
     [string]$EIDBlockedO365 = ""
     [string]$EIDCreatedDateTime = ""
-    [string]$EIDLastSignIn = ""
     [string]$EIDLastPasswordChangeDateTime = ""
     [string]$ADDomain = ""
     [string]$ADCreated = ""
-    [string]$ADLastLogonDate = ""
     [string]$ADPasswordLastSet = ""
     [string]$ADPasswordExpired = ""
     [string]$ADLockedOut = ""
@@ -173,6 +171,7 @@ class UserStatsExportUser {
     [string]$ADPasswordQuality = ""
     [string]$ADPasswordLength = ""
     [string]$ADPasswordPolicyDeviation = ""
+    [string]$LastSignIn = ""
     [string]$Delete = "Yes"
     [string]$InactiveBusinessReason = ""
     [string]$InactiveExceptionUntil = ""
@@ -647,14 +646,13 @@ function GetUserStatsExportUser{
     $nu.Company = $user.ADCompany
     $nu.ADMobilePhone = $user.ADMobilePhone
     $nu.AdminDescription = $user.ADadminDescription
-    $nu.EIDAccountEnabled = $user.EIDAccountEnabled
+    $nu.AccountEnabled = $user.EIDAccountEnabled -or $user.ADAccountEnabled
     $nu.EIDBlockedO365 = $user.EIDBlockedO365
     $nu.EIDCreatedDateTime = $user.EIDCreatedDateTime
-    $nu.EIDLastSignIn = $user.EIDLastSignIn
+    $nu.LastSignIn = $user.HybridLastSignIn
     $nu.EIDLastPasswordChangeDateTime = $user.EIDLastPasswordChangeDateTime
     $nu.ADDomain = $user.ADDomain
     $nu.ADCreated = $user.ADCreated
-    $nu.ADLastLogonDate = $user.ADLastLogonDate
     $nu.ADPasswordLastSet = $user.ADPasswordLastSet
     $nu.ADPasswordExpired = $user.ADPasswordExpired
     $nu.ADLockedOut = $user.ADLockedOut
@@ -689,28 +687,24 @@ function DeleteGuestUsers {
         return
     }
 
-    $date = (Get-Date).toString("yyyyMMdd_HHmm")
-    $Logfile = "./$($date)_DeleteGuestUser.log"
-    
     # Getting list of all guest users to delete
     $RemovalList = $AllAccounts | Where-Object { $_.UserType -eq "Guest"  -and $_.LastActivityDaysCategory -eq $CONF_INACTIVE_KEYWORD -and $_.CleanupException -eq ""}
 
     # Creating list of guest accounts for deletion
-    $FILE_NEW_INACTIVE_GUESTS = "$($CONF_MY_WORKDIR)/ReportNewInactiveGuestAccounts_$(Get-Date -Format "yyyyMMdd").xlsx"
+    $FILE_NEW_INACTIVE_GUESTS = "$($CONF_REPORT_INACTIVE_GUEST_ACCOUNTS)_$(Get-Date -Format "yyyyMMdd").xlsx"
     $RemovalList | Export-Excel -Path $FILE_NEW_INACTIVE_GUESTS -ClearSheet
     Write-Information "Please check guest accounts for deletion before confirming at: $($FILE_NEW_INACTIVE_GUESTS)"
 
     # Waiting for confirmation
     $UserConfDeleteGuests = Read-Host "Please confirm with ""yes"" to delete $($RemovalList.Count) guest users. [No]"
     if ( $UserConfDeleteGuests -like "yes") {
-        Write-Information "Deleting $($RemovalList.Count) guest users from Entra ID... A logfile is being created at: $Logfile"
-        Start-Transcript -Append -Path $Logfile
+        Write-Information "Deleting $($RemovalList.Count) guest users from Entra ID..."
         # Gaining write access to Microsoft Graph
         ConnectEntraID -ReadWrite $true
         $counter = 0
         # Deleting guest users
         foreach ($usr In $RemovalList) {
-            Write-Information "Deleting User with ID: $($usr.Id)..."
+            Write-Information "Deleting user with ID: $($usr.Id)..."
             try {
                 #Write-Information "Remove-MgUser -PassThru -UserId $($usr.Id)"
                 Remove-MgUser -PassThru -UserId $($usr.Id)
@@ -732,7 +726,6 @@ function DeleteGuestUsers {
                 Start-Sleep 3
             }
         }
-        Stop-Transcript 
     } else {
         Write-Warning "Cancelled deletion of guest user accounts."
     }   
@@ -1072,7 +1065,7 @@ function UpdateBlockedAccessGroup {
     }
 
     # Creating list of accounts to be blocked for checking before blocking
-    $FILE_NEW_BLOCKED_ACCOUNTS = "$($CONF_MY_WORKDIR)/ReportNewBlockedAccounts_$(Get-Date -Format "yyyyMMdd").xlsx"
+    $FILE_NEW_BLOCKED_ACCOUNTS = "$($CONF_REPORT_BLOCKED_ACCOUNTS)_$(Get-Date -Format "yyyyMMdd").xlsx"
     $ToBeAccountsHash.Values | Export-Excel -Path $FILE_NEW_BLOCKED_ACCOUNTS -ClearSheet
     Write-Information "Please check new blocked accounts before confirming at: $($FILE_NEW_BLOCKED_ACCOUNTS)"
     
@@ -1253,117 +1246,108 @@ function UpdateUserStatsUserADDetails {
     # Retrieve all users from AD and Entra ID either from existing files or retrieve directly
 #>
 function LoadAllUsers {
-    # ALL Users: Import existing all users csv or get a new version
-    if (Test-Path -Path $CONF_FILE_ALL) {
-        Write-Information "Importing all users from csv..."
-        $all_users = Import-Csv $CONF_FILE_ALL -Encoding UTF8 -Delimiter $CONF_CSV_DELIMITER
+    # ALL users
+    $all_users_coll = New-Object System.Collections.Generic.List[System.Object]
+    Write-Information "Getting a list of all users from Entra ID..."
+    # Getting all users and save only selected properties
+    $all_users_aad = Get-MgUser -All -Property 'DisplayName, Id, Mail, UserPrincipalName, UserType, AccountEnabled, CreatedDateTime, LastPasswordChangeDateTime, GivenName, Surname, OnPremisesDomainName, OnPremisesSecurityIdentifier, CompanyName, EmployeeType, otherMails, SignInActivity'
+    # Creating user objects for all EID users
+    $ProgressCounter = 0
+    $all_users_aad | ForEach-Object {
+        $all_users_coll.Add( (GetUserStatsUser -User $_ -Type "EID") )
+        $ProgressCounter++
+        $percent_complete = [math]::round( ($ProgressCounter/($all_users_aad.Count) )*100 ,2)
+        Write-Progress -Activity "Creating user list..." -Status "$percent_complete %" -PercentComplete $percent_complete
     }
-    else {
-        # ALL users
+    # Closing progress bar
+    Write-Progress -Activity "Creating user list..." -Completed
+    # Setting List of EID to null
+    $all_users_aad = $null
+    # Getting all ActiveDirectory accounts
+    if ($CONF_INCLUDE_ACTIVE_DIRECTORY) {
+        # Loading AD users and mapping to Azure AD / Entra ID users
+        Write-Information "Getting a list of all users from AD..."
+        # Creating list of all member users, guests not relevant for AD
+        $member_users_coll = New-Object System.Collections.Generic.List[System.Object]
+        $all_users_tmp = $all_users_coll.ToArray()
+        # New collection of updated or skipped guest users
         $all_users_coll = New-Object System.Collections.Generic.List[System.Object]
-        Write-Information "Getting a list of all users from Entra ID..."
-        # Getting all users and save only selected properties
-        $all_users_aad = Get-MgUser -All -Property 'DisplayName, Id, Mail, UserPrincipalName, UserType, AccountEnabled, CreatedDateTime, LastPasswordChangeDateTime, GivenName, Surname, OnPremisesDomainName, OnPremisesSecurityIdentifier, CompanyName, EmployeeType, otherMails, SignInActivity'
-        # Creating user objects for all EID users
-        $ProgressCounter = 0
-        $all_users_aad | ForEach-Object {
-            $all_users_coll.Add( (GetUserStatsUser -User $_ -Type "EID") )
-            $ProgressCounter++
-            $percent_complete = [math]::round( ($ProgressCounter/($all_users_aad.Count) )*100 ,2)
-            Write-Progress -Activity "Creating user list..." -Status "$percent_complete %" -PercentComplete $percent_complete
+        $all_users_tmp | ForEach-Object {
+            if ( $_.UserType -eq "Member" ) {
+                $member_users_coll.Add($_)
+            }
+            else {
+                $all_users_coll.Add($_)
+            }
         }
-        # Closing progress bar
-        Write-Progress -Activity "Creating user list..." -Completed
-        # Setting List of EID to null
-        $all_users_aad = $null
-        # Getting all ActiveDirectory accounts
-        if ($CONF_INCLUDE_ACTIVE_DIRECTORY) {
-            # Loading AD users and mapping to Azure AD / Entra ID users
-            Write-Information "Getting a list of all users from AD..."
-            # Creating list of all member users, guests not relevant for AD
-            $member_users_coll = New-Object System.Collections.Generic.List[System.Object]
-            $all_users_tmp = $all_users_coll.ToArray()
-            # New collection of updated or skipped guest users
-            $all_users_coll = New-Object System.Collections.Generic.List[System.Object]
-            $all_users_tmp | ForEach-Object {
-                if ( $_.UserType -eq "Member" ) {
-                    $member_users_coll.Add($_)
+        # Getting all active directory users
+        $AllDomainsUserHash = GetAllADDomainUsers
+        
+        # Some counters
+        $ADOnlyUsers = 0
+        $UpdatedEIDUsers = 0
+        $EIDOnlyUsers = 0
+        $ProgressCounter = 0
+        
+        # Mapping AD users to Entra ID users
+        foreach ($mu In $member_users_coll) {
+            try {
+                if ( $mu.EIDonPremisesSecurityIdentifier -eq "" -or $mu.EIDonPremisesDomainName -eq "" ) {
+                    # Skipping for users which are EID only
+                    $mu.ProcessingRemark += "EID Only user;"
+                    $all_users_coll.Add($mu)
+                    $EIDOnlyUsers++
                 }
                 else {
-                    $all_users_coll.Add($_)
-                }
-            }
-            # Getting all active directory users
-            $AllDomainsUserHash = GetAllADDomainUsers
-            
-            # Some counters
-            $ADOnlyUsers = 0
-            $UpdatedEIDUsers = 0
-            $EIDOnlyUsers = 0
-            $ProgressCounter = 0
-            
-            # Mapping AD users to Entra ID users
-            foreach ($mu In $member_users_coll) {
-                try {
-                    if ( $mu.EIDonPremisesSecurityIdentifier -eq "" -or $mu.EIDonPremisesDomainName -eq "" ) {
-                        # Skipping for users which are EID only
-                        $mu.ProcessingRemark += "EID Only user;"
+                    $ADuser = $AllDomainsUserHash[$mu.EIDonPremisesSecurityIdentifier]
+                    if ($null -ne $ADuser) {
+                        $AllDomainsUserHash.Remove($mu.EIDonPremisesSecurityIdentifier)
+                        # Update user with AD details and add to final collection
+                        $all_users_coll.Add( (UpdateUserStatsUserADDetails -CurrentUser $mu -ADDetails $ADuser) )
+                        $UpdatedEIDUsers++
+                    }
+                    else {
+                        # User not found in AD
+                        $mu.ProcessingRemark += "SID not found in AD;"
                         $all_users_coll.Add($mu)
                         $EIDOnlyUsers++
                     }
-                    else {
-                        $ADuser = $AllDomainsUserHash[$mu.EIDonPremisesSecurityIdentifier]
-                        if ($null -ne $ADuser) {
-                            $AllDomainsUserHash.Remove($mu.EIDonPremisesSecurityIdentifier)
-                            # Update user with AD details and add to final collection
-                            $all_users_coll.Add( (UpdateUserStatsUserADDetails -CurrentUser $mu -ADDetails $ADuser) )
-                            $UpdatedEIDUsers++
-                        }
-                        else {
-                            # User not found in AD
-                            $mu.ProcessingRemark += "SID not found in AD;"
-                            $all_users_coll.Add($mu)
-                            $EIDOnlyUsers++
-                        }
-                    }
-                    $ProgressCounter++
-                    $percent_complete = [math]::round( ($ProgressCounter/($member_users_coll.Count) )*100 ,2)
-                    Write-Progress -Activity "Mapping EID users to On-Premise AD..." -Status "$percent_complete %" -PercentComplete $percent_complete
+                }
+                $ProgressCounter++
+                $percent_complete = [math]::round( ($ProgressCounter/($member_users_coll.Count) )*100 ,2)
+                Write-Progress -Activity "Mapping EID users to On-Premise AD..." -Status "$percent_complete %" -PercentComplete $percent_complete
+            }
+            catch {
+                Write-Error "Exception while Mapping EID users to On-Premise AD"
+                Write-Error "$Error[0]"
+                exit
+            }
+        }
+        # Closing progress bar
+        Write-Progress -Activity "Mapping EID users to On-Premise AD..." -Completed
+        Write-Information "Updated $UpdatedEIDUsers users of EID with AD details."
+
+        # Adding EID only users
+        $AllDomainsUserHash.Keys | ForEach-Object {
+                try {
+                    # Getting user
+                    $au = $AllDomainsUserHash[$_]
+                    # Creating and adding AD-Only user
+                    $all_users_coll.Add( (GetUserStatsUser -User $au -Type "AD") )
+                    $ADOnlyUsers++
                 }
                 catch {
-                    Write-Error "Exception while Mapping EID users to On-Premise AD"
-                    Write-Error "$Error[0]"
-                    exit
+                    Write-Warning "Error: $($Error[0])"
+                    Write-Warning "Failed to add AD-Only User: $($au)"
+                    continue
                 }
-            }
-            # Closing progress bar
-            Write-Progress -Activity "Mapping EID users to On-Premise AD..." -Completed
-            Write-Information "Updated $UpdatedEIDUsers users of EID with AD details."
-
-            # Adding EID only users
-            $AllDomainsUserHash.Keys | ForEach-Object {
-                    try {
-                        # Getting user
-                        $au = $AllDomainsUserHash[$_]
-                        # Creating and adding AD-Only user
-                        $all_users_coll.Add( (GetUserStatsUser -User $au -Type "AD") )
-                        $ADOnlyUsers++
-                    }
-                    catch {
-                        Write-Warning "Error: $($Error[0])"
-                        Write-Warning "Failed to add AD-Only User: $($au)"
-                        continue
-                    }
-            }
-            Write-Information "Added $AdOnlyUsers AD only users | Added $EIDOnlyUsers Entra ID Only users."
-            # Sorting
-            $all_users = $all_users_coll | Sort-Object -Property DisplayName
         }
-        else {
-            $all_users = $all_users_coll | Sort-Object -Property DisplayName
-        }
-        # Exporting all users
-        $all_users | Export-Csv -Path $CONF_FILE_ALL -IncludeTypeInformation -Encoding UTF8 -Delimiter $CONF_CSV_DELIMITER
+        Write-Information "Added $AdOnlyUsers AD only users | Added $EIDOnlyUsers Entra ID Only users."
+        # Sorting
+        $all_users = $all_users_coll | Sort-Object -Property DisplayName
+    }
+    else {
+        $all_users = $all_users_coll | Sort-Object -Property DisplayName
     }
     return $all_users
 }
@@ -1379,6 +1363,10 @@ function GetRequestedUsers {
         return Import-Csv $($CONF_FILE_REQUESTEDTYPE + ".csv") -Encoding UTF8 -Delimiter $CONF_CSV_DELIMITER
     }
     else {
+        # No working files available to import. Loading all users. 
+        # Creating a new list with all users from Azure AD / Entra ID
+        $all_users = LoadAllUsers
+        Write-Information "Count of all users: $($all_users.Count)"
         if ( $UserType -eq "Any" ) {
             # Using all users
             return $all_users
@@ -1523,6 +1511,38 @@ function GetUserSignInStatistics {
     return $User
 }
 
+<#
+    .Description
+    Delete old working files after user confirmation
+#>
+function DeleteOldWorkingFiles {
+    $EXISTING_FILES = @($CONF_FILE_REQUESTEDTYPE, "$($CONF_MY_WORKDIR)/exo_mailboxes", $CONF_REPORT_BLOCKED_ACCOUNTS, $CONF_REPORT_INACTIVE_GUEST_ACCOUNTS)
+    $TEST_EXISTING_FILES = $false
+    $UserConfExistingFiles = "No"
+
+    # Checking for existing files
+    foreach ($FileSelector In $EXISTING_FILES) {
+        $item = Get-Item "$($FileSelector)*"
+        if ( $null -ne $item ) {
+            # At least one file exists
+            $TEST_EXISTING_FILES = $true
+            $UserConfExistingFiles = Read-Host "Please confirm with ""yes"" to remove old working files and start a new process. Otherwise existing files will be continued. [No]"
+            break
+        }
+    }
+    # Removing existing files
+    if ( $UserConfExistingFiles -like "yes" ) {
+        # Remove temporary existing files
+        Write-Information "Removing existing working files..."
+        foreach ($FileSelector in $EXISTING_FILES ) {
+            Write-Information "Removing: $($FileSelector)*"
+            Remove-Item "$($FileSelector)*"
+        }
+    } elseif ($TEST_EXISTING_FILES) {
+        Write-Information "Continuing with existing working files..."
+    }
+}
+
 #===============================================================================
 #      SECTION: PARAMETERS AND SUBFUNCTIONS
 #===============================================================================
@@ -1530,36 +1550,9 @@ function GetUserSignInStatistics {
 Write-Host "`n#### msuserstats - user statistics and cleanup for Microsoft Entra ID and Active Directory ####`n"
 
 # Continue or fresh start?
-$EXISTING_FILES = @($CONF_FILE_ALL, $($CONF_FILE_REQUESTEDTYPE + ".csv"), "$($CONF_MY_WORKDIR)\exo_mailboxes_*.csv", "$($CONF_FILE_REQUESTEDTYPE)_*.xlsx" )
-$TEST_EXISTING_FILES = $false
-$UserConfExistingFiles = "No"
+DeleteOldWorkingFiles
 
-# Checking for existing files
-foreach ($file In $EXISTING_FILES) {
-    if ( Test-Path -Path $file ) {
-        # At least one file exists
-        $TEST_EXISTING_FILES = $true
-        $UserConfExistingFiles = Read-Host "Please confirm with ""yes"" to remove old working files and start a new process. Otherwise existing files will be continued. [No]"
-        break
-    }
-}
-if ( $UserConfExistingFiles -like "yes" ) {
-    # Remove temporary existing files
-    Write-Information "Removing existing working files..."
-    if (Test-Path -Path $CONF_FILE_ALL) {
-        Remove-Item $CONF_FILE_ALL
-    }
-    if (Test-Path -Path $($CONF_FILE_REQUESTEDTYPE + ".csv")) {
-        Remove-Item "$($CONF_FILE_REQUESTEDTYPE).csv"
-    }
-    if (Test-Path "$($CONF_MY_WORKDIR)\exo_mailboxes_*.csv") {
-        Remove-Item "$($CONF_MY_WORKDIR)\exo_mailboxes_*.csv"
-    }
-    Remove-Item "$($CONF_FILE_REQUESTEDTYPE)_*.xlsx"
-} elseif ($TEST_EXISTING_FILES) {
-    Write-Information "Continuing with existing working files..."
-}
-
+# Exporting domain users only parameter
 if ($ExportDomainUsers) {
     # Exporting all AD domain users
     if ($IsWindows) {
@@ -1594,19 +1587,13 @@ $CleanupExceptionHash = LoadCleanupExceptionList
 # Loading Groups for Membership check
 $GroupMemberShip = GetGroupMemberShips
 
-# Creating a new list with all users from Azure AD / Entra ID
-$all_users = LoadAllUsers
-# Counting ALL Users
-$all_users_count = $all_users.Count
-Write-Information "Count of All Users: $($all_users_count)"
-
 # Logging the request user type
 Write-Information "Collecting user statistics for users of type: $($UserType)"
 
 # Getting requested users list
 $requested_users = GetRequestedUsers
 # Logging requested users count
-Write-Information "Count of Users of requested type $($UserType): $($requested_users.Count)"
+Write-Information "Count of users of requested type $($UserType): $($requested_users.Count)"
 
 #===============================================================================
 #      SECTION:  Processing requested users

@@ -85,9 +85,6 @@ $CONF_MY_WORKDIR = $PWD.Path
 # Delimiter to use in CSV files
 $CONF_CSV_DELIMITER = ";"
 
-# All Users temporary working file
-$CONF_FILE_ALL = "$($CONF_MY_WORKDIR)/all_users.csv"
-
 # Selected users temporary working file
 $CONF_FILE_REQUESTEDTYPE = "$($CONF_MY_WORKDIR)/user_type_$($UserType)"
 
@@ -96,3 +93,9 @@ $CONF_EXCEL_EXPORT_PATH = ""
 
 # Marker/Keyword for inactive user category
 $CONF_INACTIVE_KEYWORD = "Inactive"
+
+# Report file for inactive guests to be deleted
+$CONF_REPORT_INACTIVE_GUEST_ACCOUNTS = "$($CONF_MY_WORKDIR)/ReportNewInactiveGuestAccounts"
+
+# Report file for accounts to be blocked due to missing MFA methods
+$CONF_REPORT_BLOCKED_ACCOUNTS = "$($CONF_MY_WORKDIR)/ReportNewBlockedAccounts"
