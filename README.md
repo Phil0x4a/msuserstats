@@ -145,7 +145,9 @@ Custom group memberships can be reported as well. This is especially useful if y
 An example usecase can be: Check for membership in all groups that contain License in DisplayName and prefilter all groups only to groups that start with sec-. The prefiltering is just for performance reasons to limit the count of groups. 
 
 Example: 
+
 $CONF_GROUP_MEMBERSHIP = @("License")
+
 $CONF_GROUP_MEMBERSHIP_FILTER_PREFIX = "SEC-"
 
 ### Inactive Cleanup Exceptions
