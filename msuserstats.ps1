@@ -1103,7 +1103,7 @@ function ConnectEntraID{
     Write-Host "Checking authentication to Microsoft Graph..."
     # Checking authentication to Microsoft Graph with adm user and right TenantID
     $MgContext = Get-MgContext
-    if ( $null -eq $MgContext -or -not $MgContext.Account.StartsWith("adm.") -or -not $MgContext.TenantId -eq $CONF_TENANT_ID ) {
+    if ( $null -eq $MgContext ) {
         Write-Host "Connecting to Microsoft Graph, please provide admin credentials."
         if ( $ReadWrite ) {
             Connect-MgGraph -UseDeviceCode -NoWelcome -Scopes @("User.ReadWrite.All","UserAuthenticationMethod.Read.All","Group.ReadWrite.All")

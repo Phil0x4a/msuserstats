@@ -6,8 +6,6 @@
 <###################################
     BASICS
 ####################################>
-# Entra Tenant ID
-$CONF_TENANT_ID = "12345-67890-13c-2143-32fczzzQw93"
 
 # Include all users from Active Directory
 $CONF_INCLUDE_ACTIVE_DIRECTORY = $false

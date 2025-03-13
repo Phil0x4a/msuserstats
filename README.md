@@ -43,14 +43,6 @@ advanced settings soon.
 
 ### Install the following Powershell modules:
 
-**ImportExcel:** 
-
-    Install-Module ImportExcel
-
-**Exchange Online:** 
-
-    Install-Module ExchangeOnlineManagement
-
 **Microsoft Graph:**
 
     Install-Module Microsoft.Graph.Users
@@ -59,9 +51,15 @@ advanced settings soon.
 
     Install-Module Microsoft.Graph.Groups
 
-### Run the script
+**Exchange Online:** 
 
-Change $CONF_TENANT_ID to your tenant ID.
+    Install-Module ExchangeOnlineManagement
+
+**ImportExcel - used to export to XLSX:** 
+
+    Install-Module ImportExcel
+
+## Run the script
 
 #### For Entra ID only: run on any platform with your configured settings in config.ps1:
 
@@ -95,28 +93,73 @@ Change $CONF_TENANT_ID to your tenant ID.
 
 ## Configuration Basics
 
-Change the configuration to your needs
+Change the configuration file config.ps1 to your individual requirements. 
 
-### $CONF_TENANT_ID
+### Active Directory
 
-Set $CONF_TENANT_ID to your Entra tenant ID
+You can include Active Directory which allows you to list your AD accounts in addition to your Entra ID accounts. To avoid duplicates the Entra ID users are mapped to their corresponding AD account. Finally the export contains your hybrid synced users, the AD only users and Entra ID only users. 
+The script will automatically determine your domains from your AD forest. It is recommended using a read-only user for authentication. To query the AD a x64 Windows with RSAT tools installed is required. 
 
-Example: $CONF_TENANT_ID = "12345-67890-13c-2143-32fczzzQw93"
+Example: $CONF_INCLUDE_ACTIVE_DIRECTORY = $true
 
-### $CONF_INCLUDE_ACTIVE_DIRECTORY
+### Inactivity timeframe
 
-Set $CONF_INCLUDE_ACTIVE_DIRECTORY to $true to include your Active Directory. The script will automatically determine your
-domains from your AD forest. It is recommended using a read-only user for authentication. 
-
-Set $CONF_INCLUDE_ACTIVE_DIRECTORY to $false to start with all your Entra ID users only. 
-
-Example: $CONF_INCLUDE_ACTIVE_DIRECTORY = $false
-
-### $CONF_INACTIVE_DAYS
-
-Set $CONF_INACTIVE_DAYS to the days after which an account is marked as inactive with a sign-in
+You can configure the days after which an account is marked as inactive. 
 
 Example: $CONF_INACTIVE_DAYS = 90
 
-... to be continued ...
+### Exchange Online
 
+Exchange Online can be queried to get all mailboxes. The script uses the mailbox type and populates this. That information can help to identify accounts that are not directly used by interactive users, such as SharedMailbox or SchedulingMailbox.
+
+Example: $CONF_QUERY_EXCHANGE_ONLINE = $true
+
+## Advanced Configuration
+
+### Blocking access for users not enrolled to MFA
+
+After enabling MFA, users are required to enroll and configure authentication methods. Unless they have not completed this task, the account is still unprotected and can also be enrolled from a potential attacker. Therefore it is recommended to block users 30 days after creation if they don't enroll. 
+
+Set this configuration to a group ID which is being used in your conditional access policies to block access to O365 services and Entra ID. 
+
+Example: $CONF_BLOCKED_SECURITY_GROUP = "12345-12456-12355-12453445"
+
+Related: MFA Exceptions
+
+### MFA Exceptions
+
+If you have user accounts which have an exception for MFA, you can configure groups that hold these exceptional accounts. The script queries these groups and checks if a user has an MFA exception. This can be used for reporting but also with $CONF_BLOCKED_SECURITY_GROUP these users are not getting blocked without MFA methods. 
+
+Example: $CONF_MFA_EXCEPTION_SECURITY_GROUPS = @("12345-12456-12355-12453445","12345-12456-12355-124534667")
+
+### MFA Enabled 
+
+Enabling MFA per default is strongly recommended. However, sometimes this is not suitable, eg. during a phased rollout of MFA. In these situations you can report on users which are enabled for MFA if you add these groups. 
+
+Example: $CONF_MFA_ENABLED_SECURITY_GROUPS = @("12345-12456-12355-9875445","12345-12456-12355-789378")
+
+### Custom Group Memberships
+
+Custom group memberships can be reported as well. This is especially useful if you have groups for licensing purposes, special applications or permissions which you want to report for every user.
+
+An example usecase can be: Check for membership in all groups that contain License in DisplayName and prefilter all groups only to groups that start with sec-. The prefiltering is just for performance reasons to limit the count of groups. 
+
+Example: 
+$CONF_GROUP_MEMBERSHIP = @("License")
+$CONF_GROUP_MEMBERSHIP_FILTER_PREFIX = "SEC-"
+
+### Inactive Cleanup Exceptions
+
+Inactive users are typically candidates for deletion. In many cases inactivity can also result from special accounts such as SharedMailboxes with delegation, long leavers or other service accounts. To add reporting on such accounts you can maintain a list of cleanup exceptions and mark them as inactive exception. Such an exception requires an email address, UPN or ID, a requestor, expiry date and comment. That ensures that also these exceptions are being reviewed again after some time. 
+
+The email address/upn is used with an -contains condition on UPN or email address. An ID is compared with users ID. 
+
+Create a CSV file and add the following colums. Otherwise download use the CleanupException.csv example file in this repository. 
+
+    Enabled; email address/upn/ID; Requestor; Valid until (YYYYMMDD); Comments
+
+Configure the exceptions file to be used. After the Valid until date is reached, the exception is no longer applied. 
+
+Semicolon is used as delimiter for CSV files. If you want to use something else like comma, change $CONF_CSV_DELIMITER accordingly.
+
+Example: $CONF_FILE_CLEANUPEXCEPTIONLIST = "CleanupExceptions.csv"
